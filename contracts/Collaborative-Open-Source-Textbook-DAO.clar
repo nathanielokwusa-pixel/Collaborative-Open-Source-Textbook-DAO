@@ -131,8 +131,9 @@
 (define-public (propose (chapter uint) (hash (string-ascii 128)) (reward uint) (duration uint))
   (begin
     (asserts! (> reward u0) (err err-zero))
-    (let ((id (var-get next-proposal-id)))
-      (map-set proposals {id: id} {proposer: tx-sender, chapter: chapter, hash: hash, reward: reward, start: u0, end: duration, yes: u0, no: u0, finalized: false, accepted: false})
+    (asserts! (> duration u0) (err err-zero))
+    (let ((id (var-get next-proposal-id)) (start stacks-block-height) (finish (+ stacks-block-height duration)))
+      (map-set proposals {id: id} {proposer: tx-sender, chapter: chapter, hash: hash, reward: reward, start: start, end: finish, yes: u0, no: u0, finalized: false, accepted: false})
       (var-set next-proposal-id (+ id u1))
       (ok id)
     )
@@ -147,6 +148,7 @@
   (begin
     (let ((p (unwrap! (map-get? proposals {id: id}) (err err-not-found))))
       (asserts! (not (get finalized p)) (err err-finalized))
+      (asserts! (and (>= stacks-block-height (get start p)) (< stacks-block-height (get end p))) (err err-bad-arg))
       (asserts! (is-none (map-get? votes {id: id, voter: tx-sender})) (err err-voted))
       (let ((w (stake-of-now tx-sender)))
         (asserts! (> w u0) (err err-zero))
@@ -176,6 +178,7 @@
   (begin
     (let ((p (unwrap! (map-get? proposals {id: id}) (err err-not-found))))
       (asserts! (not (get finalized p)) (err err-finalized))
+      (asserts! (>= stacks-block-height (get end p)) (err err-bad-arg))
       (let ((yes (get yes p)) (no (get no p)) (q (var-get min-quorum)))
         (let ((okpass (and (>= yes q) (> yes no))))
           (if okpass
@@ -202,36 +205,18 @@
   )
 )
 
+(define-read-only (proposal-status (id uint))
+  (let ((p (unwrap! (map-get? proposals {id: id}) (err err-not-found))))
+    (let ((s (get start p)) (e (get end p)) (now stacks-block-height) (f (get finalized p)))
+      (let ((upcoming (< now s)) (active (and (not f) (>= now s) (< now e))) (ended (or f (>= now e))))
+        (ok {upcoming: upcoming, active: active, ended: ended})
+      )
+    )
+  )
+)
+
 (define-read-only (voted? (id uint) (who principal))
   (ok (is-some (map-get? votes {id: id, voter: who})))
 )
 
-;; title: Collaborative-Open-Source-Textbook-DAO
-;; version:
-;; summary:
-;; description:
-
-;; traits
-;;
-
-;; token definitions
-;;
-
-;; constants
-;;
-
-;; data vars
-;;
-
-;; data maps
-;;
-
-;; public functions
-;;
-
-;; read only functions
-;;
-
-;; private functions
-;;
 
