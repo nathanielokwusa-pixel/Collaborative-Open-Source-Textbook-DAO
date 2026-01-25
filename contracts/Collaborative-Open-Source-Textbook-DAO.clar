@@ -6,12 +6,14 @@
 (define-constant err-voted u105)
 (define-constant err-zero u106)
 (define-constant err-insufficient u107)
+(define-constant err-self-delegate u108)
 
 (define-map balances {owner: principal} {amount: uint})
 (define-map staked {owner: principal} {amount: uint})
 (define-map proposals {id: uint} {proposer: principal, chapter: uint, hash: (string-ascii 128), reward: uint, start: uint, end: uint, yes: uint, no: uint, finalized: bool, accepted: bool})
 (define-map votes {id: uint, voter: principal} {support: bool})
 (define-map chapters {id: uint} {hash: (string-ascii 128), rev: uint})
+(define-map delegations {delegator: principal} {delegate: principal})
 
 (define-data-var owner (optional principal) none)
 (define-data-var next-proposal-id uint u0)
@@ -217,6 +219,55 @@
 
 (define-read-only (voted? (id uint) (who principal))
   (ok (is-some (map-get? votes {id: id, voter: who})))
+)
+
+(define-read-only (get-delegate (who principal))
+  (ok (get delegate (map-get? delegations {delegator: who})))
+)
+
+(define-read-only (get-voting-power (who principal))
+  (let ((own-stake (stake-of-now who)))
+    (ok own-stake)
+  )
+)
+
+(define-public (delegate-to (delegate-addr principal))
+  (begin
+    (asserts! (not (is-eq tx-sender delegate-addr)) (err err-self-delegate))
+    (map-set delegations {delegator: tx-sender} {delegate: delegate-addr})
+    (ok true)
+  )
+)
+
+(define-public (revoke-delegation)
+  (begin
+    (asserts! (is-some (map-get? delegations {delegator: tx-sender})) (err err-not-found))
+    (map-delete delegations {delegator: tx-sender})
+    (ok true)
+  )
+)
+
+(define-public (vote-as-delegate (id uint) (support bool) (delegator principal))
+  (begin
+    (let ((del (map-get? delegations {delegator: delegator})))
+      (asserts! (is-some del) (err err-not-found))
+      (asserts! (is-eq tx-sender (get delegate (unwrap-panic del))) (err err-unauthorized))
+      (let ((p (unwrap! (map-get? proposals {id: id}) (err err-not-found))))
+        (asserts! (not (get finalized p)) (err err-finalized))
+        (asserts! (and (>= stacks-block-height (get start p)) (< stacks-block-height (get end p))) (err err-bad-arg))
+        (asserts! (is-none (map-get? votes {id: id, voter: delegator})) (err err-voted))
+        (let ((w (stake-of-now delegator)))
+          (asserts! (> w u0) (err err-zero))
+          (map-set votes {id: id, voter: delegator} {support: support})
+          (if support
+            (map-set proposals {id: id} {proposer: (get proposer p), chapter: (get chapter p), hash: (get hash p), reward: (get reward p), start: (get start p), end: (get end p), yes: (+ (get yes p) w), no: (get no p), finalized: false, accepted: false})
+            (map-set proposals {id: id} {proposer: (get proposer p), chapter: (get chapter p), hash: (get hash p), reward: (get reward p), start: (get start p), end: (get end p), yes: (get yes p), no: (+ (get no p) w), finalized: false, accepted: false})
+          )
+          (ok true)
+        )
+      )
+    )
+  )
 )
 
 
